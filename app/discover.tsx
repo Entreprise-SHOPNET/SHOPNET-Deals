@@ -11,7 +11,6 @@ import {
   FlatList,
   ScrollView,
   Dimensions,
-  Animated,
   Modal,
   SafeAreaView,
   StatusBar,
@@ -21,48 +20,31 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 
 // ========== CONSTANTES ==========
 const { width } = Dimensions.get('window');
 const LOCAL_API = 'https://shopnet-backend.onrender.com/api';
 const ITEMS_PER_PAGE = 10;
-const INITIAL_LIMIT = 50; // Pour alimenter les sections horizontales
+const INITIAL_LIMIT = 50;
 
-// ========== PALETTE DE COULEURS (Mode sombre / clair) ==========
-const LIGHT_THEME = {
-  primary: '#00182A',
-  background: '#F5F7FA',
+// ========== PALETTE DE COULEURS (STYLE ALIBABA) ==========
+const COLORS = {
+  background: '#FFFFFF',
   card: '#FFFFFF',
   text: '#1A2C3E',
-  textSecondary: '#5A6B7A',
-  accent: '#42A5F5',
-  accentLight: '#E3F2FD',
-  border: '#E0E7EF',
+  textSecondary: '#6B7A8C',
+  accent: '#0A68B4',
+  accentLight: '#E6F0FA',
+  border: '#E8E8E8',
   success: '#4CAF50',
   warning: '#FF9800',
-  error: '#FF6B6B',
-  gold: '#FFD700',
+  error: '#F44336',
+  gold: '#FFC107',
+  verified: '#1877F2',
   headerBg: '#FFFFFF',
   statusBar: 'dark-content',
-};
-
-const DARK_THEME = {
-  primary: '#00182A',
-  background: '#0A1420',
-  card: '#1E2A3B',
-  text: '#FFFFFF',
-  textSecondary: '#A0AEC0',
-  accent: '#42A5F5',
-  accentLight: 'rgba(66, 165, 245, 0.1)',
-  border: '#2C3A4A',
-  success: '#4CAF50',
-  warning: '#FF9800',
-  error: '#FF6B6B',
-  gold: '#FFD700',
-  headerBg: '#00182A',
-  statusBar: 'light-content',
 };
 
 // ========== TYPES ==========
@@ -73,7 +55,7 @@ type Product = {
   price: number;
   original_price: number | null;
   images: string[];
-  likes: number;      // gardé pour le tri "populaire"
+  likes: number;
   shares: number;
   comments: number;
   isLiked: boolean;
@@ -93,19 +75,37 @@ type Product = {
   };
 };
 
-type FavoriteItem = {
-  id: string;
-  title: string;
-  price: number;
-  image: string;
-  sellerName: string;
-  addedAt: number;
+type Shop = {
+  id: number;
+  nom: string;
+  logo: string;
+  description: string;
+  ville: string;
+  pays: string;
+  latitude: string;
+  longitude: string;
+  type_boutique: string;
+  date_activation: string | null;
+  distance: number;
 };
 
-// ========== GESTION DES FAVORIS (AsyncStorage) ==========
+type Category = {
+  id: string;
+  name: string;
+  icon: keyof typeof Ionicons.glyphMap;
+};
+
+// ========== COMPOSANT BADGE VÉRIFIÉ ==========
+const VerificationBadge = ({ size = 14 }: { size?: number }) => (
+  <View style={[styles.verificationBadge, { width: size, height: size }]}>
+    <MaterialIcons name="verified" size={size * 0.9} color={COLORS.verified} />
+  </View>
+);
+
+// ========== GESTION DES FAVORIS ==========
 const FAVORITES_STORAGE_KEY = '@shopnet_favorites';
 
-const getFavorites = async (): Promise<FavoriteItem[]> => {
+const getFavorites = async (): Promise<any[]> => {
   try {
     const data = await AsyncStorage.getItem(FAVORITES_STORAGE_KEY);
     return data ? JSON.parse(data) : [];
@@ -116,7 +116,7 @@ const addFavorite = async (product: Product): Promise<void> => {
   try {
     const favorites = await getFavorites();
     if (!favorites.some(fav => fav.id === product.id)) {
-      const newFav: FavoriteItem = {
+      const newFav = {
         id: product.id,
         title: product.title,
         price: product.price,
@@ -147,70 +147,73 @@ const isFavorite = async (productId: string): Promise<boolean> => {
 // ========== COMPOSANT PRINCIPAL ==========
 export default function DiscoverScreen() {
   const router = useRouter();
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   // États produits
-  const [allProducts, setAllProducts] = useState<Product[]>([]); // Tous les produits chargés
-  const [feedProducts, setFeedProducts] = useState<Product[]>([]); // Produits pour le feed principal (paginés)
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [feedProducts, setFeedProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // États UI
+  // États sections
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [trendingProducts, setTrendingProducts] = useState<Product[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [favoritesCount, setFavoritesCount] = useState(0);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [actionModalVisible, setActionModalVisible] = useState(false);
-  const [favoritesCount, setFavoritesCount] = useState(0);
+
   const flatListRef = useRef<FlatList>(null);
 
-  // Animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
+  // ========== CATÉGORIES (COMME DANS TON CODE QUI MARCHE) ==========
+  const categories: Category[] = [
+    { id: '1', name: 'Électronique', icon: 'phone-portrait-outline' },
+    { id: '2', name: 'Mode', icon: 'shirt-outline' },
+    { id: '3', name: 'Maison', icon: 'home-outline' },
+    { id: '4', name: 'Sports', icon: 'basketball-outline' },
+    { id: '5', name: 'Auto', icon: 'car-outline' },
+    { id: '6', name: 'Livres', icon: 'book-outline' },
+    { id: '7', name: 'Santé', icon: 'heart-outline' },
+    { id: '8', name: 'Jouets', icon: 'game-controller-outline' },
+  ];
 
   // ========== CHARGEMENT INITIAL ==========
   useEffect(() => {
-    startEntranceAnimation();
     loadFavoritesCount();
-    fetchInitialProducts();
+    requestLocationAndFetchData();
   }, []);
 
-  // Animation d'entrée
-  const startEntranceAnimation = () => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-    ]).start();
-  };
-
-  // Charger le nombre de favoris
   const loadFavoritesCount = async () => {
     const favs = await getFavorites();
     setFavoritesCount(favs.length);
   };
 
-  // ========== RÉCUPÉRATION DES PRODUITS (PUBLIC) ==========
-  const fetchInitialProducts = async () => {
+  const requestLocationAndFetchData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      // Charger suffisamment de produits pour alimenter les sections horizontales
-      const params = new URLSearchParams({ page: '1', limit: INITIAL_LIMIT.toString() });
-      const response = await fetch(`${LOCAL_API}/products?${params}`);
-      const data = await response.json();
-
-      if (data.success) {
-        let products = formatProducts(data.products || []);
-        // Vérifier les favoris pour chaque produit
-        for (let p of products) {
-          p.isLiked = await isFavorite(p.id);
-        }
-        setAllProducts(products);
-        // Pour le feed principal, on prend les 10 premiers (page 1)
-        setFeedProducts(products.slice(0, ITEMS_PER_PAGE));
-        setPage(1);
-        setHasMore(data.totalPages > 1);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      let location = null;
+      
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({});
+        location = {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        };
+        setUserLocation(location);
+      } else {
+        location = { latitude: -11.664, longitude: 27.479 };
+        setUserLocation(location);
       }
+
+      await Promise.all([
+        fetchProducts(1, true),
+        fetchNearbyShops(location!.latitude, location!.longitude),
+        fetchTrendingProducts(),
+      ]);
     } catch (error) {
       console.error('Erreur chargement initial:', error);
     } finally {
@@ -218,69 +221,110 @@ export default function DiscoverScreen() {
     }
   };
 
-  // Chargement supplémentaire (pagination infinie pour le feed)
-  const loadMoreProducts = async () => {
-    if (loadingMore || !hasMore) return;
+  // ========== BOUTIQUES PROCHES ==========
+  const fetchNearbyShops = async (lat: number, lng: number, radius = 15) => {
     try {
-      setLoadingMore(true);
-      const nextPage = page + 1;
-      const params = new URLSearchParams({ page: nextPage.toString(), limit: ITEMS_PER_PAGE.toString() });
-      const response = await fetch(`${LOCAL_API}/products?${params}`);
+      const url = `${LOCAL_API}/boutique/premium/discover/nearby?latitude=${lat}&longitude=${lng}&radius=${radius}`;
+      const response = await fetch(url);
       const data = await response.json();
-
       if (data.success) {
-        let newProducts = formatProducts(data.products || []);
-        for (let p of newProducts) {
-          p.isLiked = await isFavorite(p.id);
-        }
-        setAllProducts(prev => [...prev, ...newProducts]);
-        setFeedProducts(prev => [...prev, ...newProducts]);
-        setPage(nextPage);
-        setHasMore(data.totalPages > nextPage);
+        setShops(data.shops || []);
       }
     } catch (error) {
-      console.error('Erreur chargement supplémentaire:', error);
-    } finally {
-      setLoadingMore(false);
+      console.error('Erreur fetchNearbyShops:', error);
     }
   };
 
-  // Rafraîchissement avec mélange
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
+  // ========== PRODUITS ==========
+  const fetchProducts = async (pageNum = 1, shouldShuffle = false) => {
     try {
-      const params = new URLSearchParams({ page: '1', limit: INITIAL_LIMIT.toString() });
+      const params = new URLSearchParams({
+        page: pageNum.toString(),
+        limit: (pageNum === 1 ? INITIAL_LIMIT : ITEMS_PER_PAGE).toString(),
+      });
+      
+      if (selectedCategory) {
+        params.append('category', selectedCategory);
+      }
+
       const response = await fetch(`${LOCAL_API}/products?${params}`);
       const data = await response.json();
+
       if (data.success) {
         let products = formatProducts(data.products || []);
-        // Mélanger
-        products = shuffleArray(products);
         for (let p of products) {
           p.isLiked = await isFavorite(p.id);
         }
-        setAllProducts(products);
-        setFeedProducts(products.slice(0, ITEMS_PER_PAGE));
-        setPage(1);
-        setHasMore(data.totalPages > 1);
+        if (shouldShuffle) products = shuffleArray(products);
+
+        if (pageNum === 1) {
+          setAllProducts(products);
+          setFeedProducts(products.slice(0, ITEMS_PER_PAGE));
+        } else {
+          setAllProducts(prev => [...prev, ...products]);
+          setFeedProducts(prev => [...prev, ...products]);
+        }
+        setPage(pageNum);
+        setHasMore(pageNum < (data.totalPages || 1));
       }
     } catch (error) {
-      console.error('Erreur refresh:', error);
-    } finally {
-      setRefreshing(false);
+      console.error('Erreur fetchProducts:', error);
     }
-  }, []);
+  };
 
-  // Formater les produits reçus du backend
+  // ========== PRODUITS TENDANCES ==========
+  const fetchTrendingProducts = async () => {
+    try {
+      const response = await fetch(`${LOCAL_API}/products/analytics`);
+      const data = await response.json();
+      if (data.success && data.data.trending_products) {
+        const trending = data.data.trending_products.map((p: any) => ({
+          id: p.id.toString(),
+          title: p.title,
+          price: parseFloat(p.price),
+          original_price: null,
+          images: [],
+          likes: p.likes || 0,
+          shares: 0,
+          comments: 0,
+          isLiked: false,
+          isPromotion: false,
+          is_boosted: false,
+          category: p.category,
+          condition: '',
+          stock: 1,
+          location: '',
+          created_at: '',
+          seller: { id: '', name: p.seller_name || 'Vendeur', avatar: null, city: null },
+        }));
+        setTrendingProducts(trending);
+      }
+    } catch (error) {
+      console.error('Erreur fetchTrending:', error);
+    }
+  };
+
+  // ========== FORMATAGE PRODUIT ==========
   const formatProducts = (rawProducts: any[]): Product[] => {
     return rawProducts.map(p => ({
-      ...p,
+      id: p.id.toString(),
+      title: p.title || 'Sans titre',
+      description: p.description || '',
+      price: Number(p.price) || 0,
+      original_price: p.original_price ? Number(p.original_price) : null,
       images: Array.isArray(p.image_urls) ? p.image_urls : [],
+      likes: p.likes || 0,
+      shares: p.shares || 0,
+      comments: p.comments || 0,
+      isLiked: Boolean(p.isLiked),
       isPromotion: Boolean(p.isPromotion || p.is_boosted),
       is_boosted: Boolean(p.is_boosted),
+      is_featured: Boolean(p.is_featured),
+      category: p.category || 'Non catégorisé',
+      condition: p.condition || 'neuf',
+      stock: p.stock || 0,
       location: p.location || p.seller?.city || 'Ville inconnue',
-      price: Number(p.price),
-      original_price: p.original_price ? Number(p.original_price) : null,
+      created_at: p.created_at || '',
       seller: {
         id: p.seller?.id?.toString() || '',
         name: p.seller?.name || 'Vendeur inconnu',
@@ -290,7 +334,7 @@ export default function DiscoverScreen() {
     }));
   };
 
-  // Mélange aléatoire
+  // ========== MÉLANGE ==========
   const shuffleArray = (array: Product[]) => {
     const shuffled = [...array];
     for (let i = shuffled.length - 1; i > 0; i--) {
@@ -300,34 +344,104 @@ export default function DiscoverScreen() {
     return shuffled;
   };
 
-  // ========== GESTION FAVORIS ==========
+  // ========== CHARGEMENT SUPPLÉMENTAIRE ==========
+  const loadMoreProducts = () => {
+    if (!loadingMore && hasMore) {
+      setLoadingMore(true);
+      fetchProducts(page + 1, false).finally(() => setLoadingMore(false));
+    }
+  };
+
+  // ========== RAFRAÎCHISSEMENT ==========
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setSelectedCategory(null);
+    if (userLocation) {
+      await Promise.all([
+        fetchProducts(1, true),
+        fetchNearbyShops(userLocation.latitude, userLocation.longitude),
+        fetchTrendingProducts(),
+      ]);
+    } else {
+      await requestLocationAndFetchData();
+    }
+    setRefreshing(false);
+  }, [userLocation]);
+
+  // ========== FILTRAGE PAR CATÉGORIE ==========
+  const filterByCategory = async (categoryName: string) => {
+    if (selectedCategory === categoryName) {
+      setSelectedCategory(null);
+      setLoading(true);
+      await fetchProducts(1, true);
+      setLoading(false);
+    } else {
+      setSelectedCategory(categoryName);
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: '1',
+          limit: INITIAL_LIMIT.toString(),
+          category: categoryName,
+        });
+        const response = await fetch(`${LOCAL_API}/products?${params}`);
+        const data = await response.json();
+        if (data.success) {
+          let products = formatProducts(data.products || []);
+          for (let p of products) {
+            p.isLiked = await isFavorite(p.id);
+          }
+          setAllProducts(products);
+          setFeedProducts(products.slice(0, ITEMS_PER_PAGE));
+          setPage(1);
+          setHasMore(data.totalPages > 1);
+        }
+      } catch (error) {
+        console.error('Erreur filtre catégorie:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  // ========== FAVORIS ==========
   const toggleFavorite = async (product: Product) => {
     const isFav = await isFavorite(product.id);
     if (isFav) {
       await removeFavorite(product.id);
-      Alert.alert('❤️ Retiré des favoris');
     } else {
       await addFavorite(product);
-      Alert.alert('❤️ Ajouté aux favoris');
     }
-    // Mettre à jour l'état local
     setAllProducts(prev =>
       prev.map(p => (p.id === product.id ? { ...p, isLiked: !isFav } : p))
     );
     setFeedProducts(prev =>
       prev.map(p => (p.id === product.id ? { ...p, isLiked: !isFav } : p))
     );
+    setTrendingProducts(prev =>
+      prev.map(p => (p.id === product.id ? { ...p, isLiked: !isFav } : p))
+    );
     await loadFavoritesCount();
   };
 
-  // ========== ACTIONS HEADER ==========
-  const handleSearch = () => router.push('/(tabs)/SearchScreen');
+  // ========== NAVIGATION ==========
+const handleSearch = () => router.push('/search');
   const handleFavorites = () => router.push('/(tabs)/FavoritesScreen');
-  const handleSort = () => Alert.alert('Tri', 'Fonctionnalité à venir');
-  const handleShop = () => Alert.alert('Boutique', 'Boutiques proches à venir');
-  const toggleTheme = () => setIsDarkMode(!isDarkMode);
+  const handleFilter = () => router.push('/(tabs)/FilterScreen');
+  const handleNearbyShops = () => {
+    if (userLocation) {
+      router.push({
+        pathname: '/(tabs)/NearbyShopsScreen',
+        params: {
+          latitude: userLocation.latitude.toString(),
+          longitude: userLocation.longitude.toString(),
+        },
+      });
+    } else {
+      Alert.alert('Localisation', 'Activez la localisation pour voir les boutiques proches.');
+    }
+  };
 
-  // ========== ACTIONS PRODUIT ==========
   const goToDetail = (product: Product) => {
     router.push({
       pathname: '/(tabs)/ProductDetail',
@@ -348,60 +462,55 @@ export default function DiscoverScreen() {
     Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
   };
 
-  // ========== RENDU D'UNE CARTE PRODUIT (standard) ==========
-  const renderProductCard = (item: Product, index: number, cardWidth?: number) => {
+  // ========== RENDU CARTE PRODUIT (GRILLE 2 COLONNES) ==========
+  const renderProductCard = ({ item, index }: { item: Product; index: number }) => {
     const discount = item.original_price
       ? Math.round(((item.original_price - item.price) / item.original_price) * 100)
       : 0;
     const imageUrl = item.images?.length > 0 ? item.images[0] : null;
-    const width = cardWidth || (width - 36) / 2;
+    const cardWidth = (width - 36) / 2;
 
     return (
-      <Animated.View
-        key={`${item.id}-${index}`}
+      <View
         style={[
           styles.productCard,
           {
-            backgroundColor: theme.card,
-            borderColor: theme.border,
-            width,
+            backgroundColor: COLORS.card,
+            borderColor: COLORS.border,
+            width: cardWidth,
           },
-          { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
         ]}
       >
         <TouchableOpacity activeOpacity={0.95} onPress={() => goToDetail(item)}>
-          {/* Image */}
           <View style={styles.imageContainer}>
             {imageUrl ? (
               <Image source={{ uri: imageUrl }} style={styles.productImage} resizeMode="cover" />
             ) : (
-              <View style={[styles.imagePlaceholder, { backgroundColor: theme.border }]}>
-                <Ionicons name="cube-outline" size={30} color={theme.textSecondary} />
+              <View style={[styles.imagePlaceholder, { backgroundColor: COLORS.border }]}>
+                <Ionicons name="cube-outline" size={30} color={COLORS.textSecondary} />
               </View>
             )}
 
-            {/* Badges */}
             <View style={styles.badgeContainer}>
               {item.isPromotion && (
-                <View style={[styles.badge, { backgroundColor: theme.gold }]}>
-                  <Ionicons name="flash" size={10} color={theme.primary} />
-                  <Text style={[styles.badgeText, { color: theme.primary }]}>PROMO</Text>
+                <View style={[styles.badge, { backgroundColor: COLORS.error }]}>
+                  <Ionicons name="flash" size={10} color="#fff" />
+                  <Text style={styles.badgeText}>PROMO</Text>
                 </View>
               )}
               {item.is_boosted && !item.isPromotion && (
-                <View style={[styles.badge, { backgroundColor: theme.success }]}>
+                <View style={[styles.badge, { backgroundColor: COLORS.success }]}>
                   <Ionicons name="rocket" size={10} color="#fff" />
-                  <Text style={[styles.badgeText, { color: '#fff' }]}>BOOSTÉ</Text>
+                  <Text style={styles.badgeText}>BOOSTÉ</Text>
                 </View>
               )}
               {discount > 0 && (
-                <View style={[styles.discountBadge, { backgroundColor: theme.error }]}>
+                <View style={[styles.discountBadge, { backgroundColor: COLORS.error }]}>
                   <Text style={styles.discountText}>-{discount}%</Text>
                 </View>
               )}
             </View>
 
-            {/* Cœur favori */}
             <TouchableOpacity
               style={styles.favoriteButton}
               onPress={(e) => { e.stopPropagation(); toggleFavorite(item); }}
@@ -409,108 +518,195 @@ export default function DiscoverScreen() {
               <Ionicons
                 name={item.isLiked ? 'heart' : 'heart-outline'}
                 size={18}
-                color={item.isLiked ? theme.error : '#fff'}
+                color={item.isLiked ? COLORS.error : '#fff'}
               />
             </TouchableOpacity>
           </View>
 
-          {/* Infos produit */}
           <View style={styles.cardContent}>
-            <Text style={[styles.productTitle, { color: theme.text }]} numberOfLines={2}>
+            <Text style={[styles.productTitle, { color: COLORS.text }]} numberOfLines={2}>
               {item.title}
             </Text>
 
-            {/* Vendeur + ville */}
             <View style={styles.sellerRow}>
               {item.seller?.avatar ? (
                 <Image source={{ uri: item.seller.avatar }} style={styles.sellerAvatar} />
               ) : (
-                <View style={[styles.sellerAvatar, styles.sellerAvatarPlaceholder, { backgroundColor: theme.border }]}>
-                  <Ionicons name="person" size={12} color={theme.textSecondary} />
+                <View style={[styles.sellerAvatar, styles.sellerAvatarPlaceholder, { backgroundColor: COLORS.border }]}>
+                  <Ionicons name="person" size={12} color={COLORS.textSecondary} />
                 </View>
               )}
-              <Text style={[styles.sellerName, { color: theme.textSecondary }]} numberOfLines={1}>
+              <Text style={[styles.sellerName, { color: COLORS.textSecondary }]} numberOfLines={1}>
                 {item.seller?.name}
               </Text>
             </View>
 
-            {/* Prix */}
             <View style={styles.priceRow}>
               {item.original_price ? (
                 <View style={styles.priceContainer}>
-                  <Text style={[styles.originalPrice, { color: theme.textSecondary }]}>
+                  <Text style={[styles.originalPrice, { color: COLORS.textSecondary }]}>
                     ${item.original_price.toFixed(2)}
                   </Text>
-                  <Text style={[styles.promoPrice, { color: theme.gold }]}>
+                  <Text style={[styles.promoPrice, { color: COLORS.error }]}>
                     ${item.price.toFixed(2)}
                   </Text>
                 </View>
               ) : (
-                <Text style={[styles.regularPrice, { color: theme.accent }]}>
+                <Text style={[styles.regularPrice, { color: COLORS.accent }]}>
                   ${item.price.toFixed(2)}
                 </Text>
               )}
             </View>
 
-            {/* Localisation */}
             {item.location && (
               <View style={styles.locationRow}>
-                <Ionicons name="location-outline" size={10} color={theme.textSecondary} />
-                <Text style={[styles.locationText, { color: theme.textSecondary }]} numberOfLines={1}>
+                <Ionicons name="location-outline" size={10} color={COLORS.textSecondary} />
+                <Text style={[styles.locationText, { color: COLORS.textSecondary }]} numberOfLines={1}>
                   {item.location}
                 </Text>
               </View>
             )}
           </View>
         </TouchableOpacity>
-      </Animated.View>
-    );
-  };
-
-  // ========== SECTIONS HORIZONTALES ==========
-  const renderHorizontalSection = (title: string, products: Product[], cardWidth: number, seeAllRoute?: string) => {
-    if (products.length === 0) return null;
-    return (
-      <View style={styles.sectionContainer}>
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>{title}</Text>
-          {seeAllRoute && (
-            <TouchableOpacity onPress={() => router.push(seeAllRoute)}>
-              <Text style={[styles.seeAllText, { color: theme.accent }]}>Voir tout</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalScrollContent}
-        >
-          {products.map((item, idx) => renderProductCard(item, idx, cardWidth))}
-        </ScrollView>
       </View>
     );
   };
 
-  // ========== SECTIONS DE SUGGESTIONS (messages cliquables) ==========
-  const renderSuggestions = () => {
-    const suggestions = [
-      { id: '1', icon: 'flash', text: 'Nouveaux produits boostés 🔥', color: theme.gold },
-      { id: '2', icon: 'pricetag', text: 'Offres flash -50%', color: theme.error },
-      { id: '3', icon: 'star', text: 'Vendeurs vérifiés', color: theme.success },
-      { id: '4', icon: 'trending-up', text: 'Tendances du moment', color: theme.accent },
-    ];
+  // ========== RENDU CARTE PRODUIT HORIZONTAL ==========
+  const renderHorizontalProductCard = (item: Product, index: number, cardWidth: number) => {
+    const discount = item.original_price
+      ? Math.round(((item.original_price - item.price) / item.original_price) * 100)
+      : 0;
+    const imageUrl = item.images?.length > 0 ? item.images[0] : null;
+
     return (
-      <View style={styles.suggestionsContainer}>
-        <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 12 }]}>Suggestions</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {suggestions.map(s => (
+      <View
+        key={`${item.id}-${index}`}
+        style={[
+          styles.productCard,
+          {
+            backgroundColor: COLORS.card,
+            borderColor: COLORS.border,
+            width: cardWidth,
+            marginRight: 12,
+          },
+        ]}
+      >
+        <TouchableOpacity activeOpacity={0.95} onPress={() => goToDetail(item)}>
+          <View style={styles.imageContainer}>
+            {imageUrl ? (
+              <Image source={{ uri: imageUrl }} style={styles.productImage} resizeMode="cover" />
+            ) : (
+              <View style={[styles.imagePlaceholder, { backgroundColor: COLORS.border }]}>
+                <Ionicons name="cube-outline" size={30} color={COLORS.textSecondary} />
+              </View>
+            )}
+
+            <View style={styles.badgeContainer}>
+              {item.isPromotion && (
+                <View style={[styles.badge, { backgroundColor: COLORS.error }]}>
+                  <Ionicons name="flash" size={10} color="#fff" />
+                  <Text style={styles.badgeText}>PROMO</Text>
+                </View>
+              )}
+              {item.is_boosted && !item.isPromotion && (
+                <View style={[styles.badge, { backgroundColor: COLORS.success }]}>
+                  <Ionicons name="rocket" size={10} color="#fff" />
+                  <Text style={styles.badgeText}>BOOSTÉ</Text>
+                </View>
+              )}
+              {discount > 0 && (
+                <View style={[styles.discountBadge, { backgroundColor: COLORS.error }]}>
+                  <Text style={styles.discountText}>-{discount}%</Text>
+                </View>
+              )}
+            </View>
+
             <TouchableOpacity
-              key={s.id}
-              style={[styles.suggestionChip, { backgroundColor: theme.accentLight }]}
-              onPress={() => Alert.alert('Suggestion', s.text)}
+              style={styles.favoriteButton}
+              onPress={(e) => { e.stopPropagation(); toggleFavorite(item); }}
             >
-              <Ionicons name={s.icon as any} size={16} color={s.color} />
-              <Text style={[styles.suggestionText, { color: theme.text }]}>{s.text}</Text>
+              <Ionicons
+                name={item.isLiked ? 'heart' : 'heart-outline'}
+                size={18}
+                color={item.isLiked ? COLORS.error : '#fff'}
+              />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.cardContent}>
+            <Text style={[styles.productTitle, { color: COLORS.text }]} numberOfLines={2}>
+              {item.title}
+            </Text>
+
+            <View style={styles.sellerRow}>
+              {item.seller?.avatar ? (
+                <Image source={{ uri: item.seller.avatar }} style={styles.sellerAvatar} />
+              ) : (
+                <View style={[styles.sellerAvatar, styles.sellerAvatarPlaceholder, { backgroundColor: COLORS.border }]}>
+                  <Ionicons name="person" size={12} color={COLORS.textSecondary} />
+                </View>
+              )}
+              <Text style={[styles.sellerName, { color: COLORS.textSecondary }]} numberOfLines={1}>
+                {item.seller?.name}
+              </Text>
+            </View>
+
+            <View style={styles.priceRow}>
+              {item.original_price ? (
+                <View style={styles.priceContainer}>
+                  <Text style={[styles.originalPrice, { color: COLORS.textSecondary }]}>
+                    ${item.original_price.toFixed(2)}
+                  </Text>
+                  <Text style={[styles.promoPrice, { color: COLORS.error }]}>
+                    ${item.price.toFixed(2)}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={[styles.regularPrice, { color: COLORS.accent }]}>
+                  ${item.price.toFixed(2)}
+                </Text>
+              )}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // ========== SECTION BOUTIQUES ==========
+  const renderShopsSection = () => {
+    if (shops.length === 0) return null;
+    
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: COLORS.text }]}>Boutiques premium proches</Text>
+          <TouchableOpacity onPress={handleNearbyShops}>
+            <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shopsScrollContent}>
+          {shops.map(shop => (
+            <TouchableOpacity
+              key={shop.id}
+              style={styles.shopItem}
+              onPress={() => router.push(`/(tabs)/ShopDetail?id=${shop.id}`)}
+            >
+              <View style={styles.shopAvatarContainer}>
+                <Image source={{ uri: shop.logo }} style={styles.shopAvatar} />
+              </View>
+              <Text style={[styles.shopName, { color: COLORS.text }]} numberOfLines={1}>
+                {shop.nom}
+              </Text>
+              <View style={styles.shopMetaRow}>
+                <VerificationBadge size={12} />
+                <Text style={[styles.verifiedText, { color: COLORS.verified }]}>Vérifié</Text>
+                <Text style={[styles.dotSeparator, { color: COLORS.textSecondary }]}>•</Text>
+                <Text style={[styles.shopDistance, { color: COLORS.textSecondary }]}>
+                  {shop.distance.toFixed(1)} km
+                </Text>
+              </View>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -518,106 +714,184 @@ export default function DiscoverScreen() {
     );
   };
 
-  // ========== EN-TÊTE FIXE ==========
+  // ========== SECTION CATÉGORIES (STICKY - COMME DANS TON CODE) ==========
+  const renderCategoriesSection = () => (
+    <View style={[styles.categoriesWrapper, { backgroundColor: COLORS.background, borderBottomColor: COLORS.border }]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.categoriesScrollContent}
+      >
+        {categories.map(cat => (
+          <TouchableOpacity
+            key={cat.id}
+            style={[
+              styles.categoryItem,
+              selectedCategory === cat.name && {
+                backgroundColor: COLORS.accentLight,
+                borderColor: COLORS.accent,
+              },
+            ]}
+            onPress={() => filterByCategory(cat.name)}
+          >
+            <Ionicons
+              name={cat.icon}
+              size={20}
+              color={selectedCategory === cat.name ? COLORS.accent : COLORS.textSecondary}
+            />
+            <Text
+              style={[
+                styles.categoryText,
+                { color: selectedCategory === cat.name ? COLORS.accent : COLORS.textSecondary },
+              ]}
+            >
+              {cat.name}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
+  // ========== SECTION PRODUITS BOOSTÉS ==========
+  const renderBoostedSection = () => {
+    const boosted = allProducts.filter(p => p.is_boosted).slice(0, 10);
+    if (boosted.length === 0) return null;
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: COLORS.text }]}>🔥 Produits Boostés</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/BoostedProducts')}>
+            <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScrollContent}>
+          {boosted.map((item, idx) => renderHorizontalProductCard(item, idx, 160))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // ========== SECTION MEILLEURES OFFRES ==========
+  const renderPromoSection = () => {
+    const promos = allProducts.filter(p => p.isPromotion).slice(0, 6);
+    if (promos.length === 0) return null;
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: COLORS.text }]}>💰 Meilleures offres</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/PromoProducts')}>
+            <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScrollContent}>
+          {promos.map((item, idx) => renderHorizontalProductCard(item, idx, (width - 48) / 3))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // ========== SECTION TENDANCES ==========
+  const renderTrendingSection = () => {
+    if (trendingProducts.length === 0) return null;
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: COLORS.text }]}>📈 Les plus recherchés</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/TrendingProducts')}>
+            <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScrollContent}>
+          {trendingProducts.map((item, idx) => renderHorizontalProductCard(item, idx, (width - 32) / 2))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // ========== HEADER FIXE ==========
   const renderFixedHeader = () => (
-    <View style={[styles.fixedHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
+    <View style={[styles.fixedHeader, { backgroundColor: COLORS.headerBg, borderBottomColor: COLORS.border }]}>
       <View style={styles.headerLeft}>
         <TouchableOpacity onPress={() => router.push('/(tabs)')}>
-          <Ionicons name="cube-outline" size={28} color={theme.accent} />
+          <Ionicons name="cube-outline" size={28} color={COLORS.accent} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: isDarkMode ? '#fff' : theme.primary }]}>SHOPNET Deals</Text>
+        <Text style={[styles.headerTitle, { color: COLORS.text }]}>
+          SHOPNET <Text style={styles.headerDeals}>Deals</Text>
+        </Text>
       </View>
 
       <View style={styles.headerRight}>
         <TouchableOpacity style={styles.iconButton} onPress={handleSearch}>
-          <Ionicons name="search-outline" size={22} color={theme.accent} />
+          <Ionicons name="search-outline" size={22} color={COLORS.accent} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.iconButton} onPress={handleFavorites}>
-          <Ionicons name="heart-outline" size={22} color={theme.accent} />
+          <Ionicons name="heart-outline" size={22} color={COLORS.accent} />
           {favoritesCount > 0 && (
             <View style={styles.badgeIcon}>
               <Text style={styles.badgeIconText}>{favoritesCount}</Text>
             </View>
           )}
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton} onPress={handleSort}>
-          <Ionicons name="options-outline" size={22} color={theme.accent} />
+        <TouchableOpacity style={styles.iconButton} onPress={handleFilter}>
+          <Ionicons name="options-outline" size={22} color={COLORS.accent} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton} onPress={handleShop}>
-          <Ionicons name="storefront-outline" size={22} color={theme.accent} />
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.iconButton, styles.themeButton]} onPress={toggleTheme}>
-          <Ionicons name={isDarkMode ? 'sunny-outline' : 'moon-outline'} size={20} color={theme.accent} />
+        <TouchableOpacity style={styles.iconButton} onPress={handleNearbyShops}>
+          <Ionicons name="storefront-outline" size={22} color={COLORS.accent} />
         </TouchableOpacity>
       </View>
     </View>
   );
 
-  // ========== LISTE PRINCIPALE (AVEC SECTIONS) ==========
-  const renderListHeader = () => {
-    // Filtrer les produits pour les sections
-    const boosted = allProducts.filter(p => p.is_boosted).slice(0, 10);
-    const promos = allProducts.filter(p => p.isPromotion).slice(0, 10);
-    const popular = [...allProducts].sort((a, b) => b.likes - a.likes).slice(0, 10);
-
-    return (
-      <View style={styles.listHeaderContainer}>
-        {/* Section Boostés */}
-        {renderHorizontalSection('🔥 Produits Boostés', boosted, 160, '/boosted')}
-
-        {/* Section Meilleures offres */}
-        {renderHorizontalSection('💰 Meilleures offres', promos, (width - 48) / 3, '/promos')}
-
-        {/* Section Plus populaires */}
-        {renderHorizontalSection('📈 Les plus populaires', popular, (width - 32) / 2, '/popular')}
-
-        {/* Suggestions */}
-        {renderSuggestions()}
-
-        {/* Séparateur */}
-        <View style={[styles.divider, { backgroundColor: theme.border }]} />
-
-        {/* Titre du feed */}
-        <Text style={[styles.feedTitle, { color: theme.text }]}>Recommandations pour vous</Text>
-      </View>
-    );
-  };
+  // ========== LISTE PRINCIPALE ==========
+  const renderListHeader = () => (
+    <View style={styles.listHeaderContainer}>
+      {renderShopsSection()}
+      {renderBoostedSection()}
+      {renderPromoSection()}
+      {renderTrendingSection()}
+      <View style={[styles.divider, { backgroundColor: COLORS.border }]} />
+      <Text style={[styles.feedTitle, { color: COLORS.text }]}>
+        {selectedCategory ? `Catégorie : ${selectedCategory}` : 'Recommandations pour vous'}
+      </Text>
+    </View>
+  );
 
   // ========== MODAL D'ACTIONS ==========
   const renderActionModal = () => (
     <Modal visible={actionModalVisible} transparent animationType="fade" onRequestClose={() => setActionModalVisible(false)}>
       <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setActionModalVisible(false)}>
-        <View style={[styles.actionModal, { backgroundColor: theme.card }]}>
+        <View style={[styles.actionModal, { backgroundColor: COLORS.card }]}>
           {selectedProduct && (
             <>
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, { color: theme.text }]}>Options</Text>
-                <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]} numberOfLines={1}>
+                <Text style={[styles.modalTitle, { color: COLORS.text }]}>Options</Text>
+                <Text style={[styles.modalSubtitle, { color: COLORS.textSecondary }]} numberOfLines={1}>
                   {selectedProduct.title}
                 </Text>
               </View>
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); goToDetail(selectedProduct); }}>
-                  <Ionicons name="eye-outline" size={24} color={theme.accent} />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>Voir détails</Text>
+                  <Ionicons name="eye-outline" size={24} color={COLORS.accent} />
+                  <Text style={[styles.modalActionText, { color: COLORS.text }]}>Voir détails</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); contactWhatsApp(selectedProduct); }}>
                   <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>WhatsApp</Text>
+                  <Text style={[styles.modalActionText, { color: COLORS.text }]}>WhatsApp</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); contactEmail(selectedProduct); }}>
-                  <Ionicons name="mail-outline" size={24} color={theme.accent} />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>Email</Text>
+                  <Ionicons name="mail-outline" size={24} color={COLORS.accent} />
+                  <Text style={[styles.modalActionText, { color: COLORS.text }]}>Email</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); toggleFavorite(selectedProduct); }}>
-                  <Ionicons name={selectedProduct.isLiked ? 'heart' : 'heart-outline'} size={24} color={selectedProduct.isLiked ? theme.error : theme.accent} />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>
+                  <Ionicons name={selectedProduct.isLiked ? 'heart' : 'heart-outline'} size={24} color={selectedProduct.isLiked ? COLORS.error : COLORS.accent} />
+                  <Text style={[styles.modalActionText, { color: COLORS.text }]}>
                     {selectedProduct.isLiked ? 'Retirer des favoris' : 'Ajouter aux favoris'}
                   </Text>
                 </TouchableOpacity>
               </View>
               <TouchableOpacity style={styles.modalCancel} onPress={() => setActionModalVisible(false)}>
-                <Text style={[styles.modalCancelText, { color: theme.accent }]}>Annuler</Text>
+                <Text style={[styles.modalCancelText, { color: COLORS.accent }]}>Annuler</Text>
               </TouchableOpacity>
             </>
           )}
@@ -631,46 +905,49 @@ export default function DiscoverScreen() {
     if (loadingMore) {
       return (
         <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color={theme.accent} />
-          <Text style={[styles.loadingMoreText, { color: theme.textSecondary }]}>Chargement...</Text>
+          <ActivityIndicator size="small" color={COLORS.accent} />
+          <Text style={[styles.loadingMoreText, { color: COLORS.textSecondary }]}>Chargement...</Text>
         </View>
       );
     }
     if (!hasMore && feedProducts.length > 0) {
       return (
         <View style={styles.noMoreContainer}>
-          <Ionicons name="checkmark-circle-outline" size={20} color={theme.success} />
-          <Text style={[styles.noMoreText, { color: theme.textSecondary }]}>Fin du catalogue</Text>
+          <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.success} />
+          <Text style={[styles.noMoreText, { color: COLORS.textSecondary }]}>Fin du catalogue</Text>
         </View>
       );
     }
     return null;
   };
 
-  // ========== ÉTAT DE CHARGEMENT INITIAL ==========
+  // ========== ÉTAT DE CHARGEMENT ==========
   if (loading && allProducts.length === 0) {
     return (
-      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
-        <StatusBar barStyle={theme.statusBar} backgroundColor={theme.headerBg} />
-        <ActivityIndicator size="large" color={theme.accent} />
-        <Text style={[styles.loadingText, { color: theme.textSecondary }]}>Chargement des produits...</Text>
+      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: COLORS.background }]}>
+        <StatusBar barStyle={COLORS.statusBar as any} backgroundColor={COLORS.headerBg} />
+        <ActivityIndicator size="large" color={COLORS.accent} />
+        <Text style={[styles.loadingText, { color: COLORS.textSecondary }]}>Chargement des produits...</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <StatusBar barStyle={theme.statusBar} backgroundColor={theme.headerBg} />
+    <SafeAreaView style={[styles.container, { backgroundColor: COLORS.background }]}>
+      <StatusBar barStyle={COLORS.statusBar as any} backgroundColor={COLORS.headerBg} />
 
       {/* HEADER FIXE */}
       {renderFixedHeader()}
 
-      {/* FLATLIST PRINCIPALE */}
+      {/* CATÉGORIES STICKY - BIEN COLLÉES EN HAUT */}
+      {renderCategoriesSection()}
+
+      {/* FLATLIST PRINCIPALE - 2 COLONNES */}
       <FlatList
         ref={flatListRef}
         data={feedProducts}
-        keyExtractor={(item, index) => `feed-${item.id}-${index}`}
-        renderItem={({ item, index }) => renderProductCard(item, index, (width - 36) / 2)}
+        keyExtractor={(item) => `feed-${item.id}`}
+        renderItem={renderProductCard}
         numColumns={2}
         columnWrapperStyle={styles.columnWrapper}
         contentContainerStyle={styles.flatListContent}
@@ -683,16 +960,16 @@ export default function DiscoverScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[theme.accent]}
-            tintColor={theme.accent}
+            colors={[COLORS.accent]}
+            tintColor={COLORS.accent}
           />
         }
         ListEmptyComponent={
           !loading && (
             <View style={styles.emptyState}>
-              <Ionicons name="cube-outline" size={64} color={theme.textSecondary} />
-              <Text style={[styles.emptyStateTitle, { color: theme.text }]}>Aucun produit</Text>
-              <TouchableOpacity style={[styles.retryButton, { backgroundColor: theme.accent }]} onPress={onRefresh}>
+              <Ionicons name="cube-outline" size={64} color={COLORS.textSecondary} />
+              <Text style={[styles.emptyStateTitle, { color: COLORS.text }]}>Aucun produit</Text>
+              <TouchableOpacity style={[styles.retryButton, { backgroundColor: COLORS.accent }]} onPress={onRefresh}>
                 <Ionicons name="refresh-outline" size={20} color="#fff" />
                 <Text style={styles.retryButtonText}>Actualiser</Text>
               </TouchableOpacity>
@@ -728,6 +1005,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
   },
+  headerDeals: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: COLORS.error,
+  },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -737,14 +1019,11 @@ const styles = StyleSheet.create({
     position: 'relative',
     padding: 4,
   },
-  themeButton: {
-    marginLeft: 4,
-  },
   badgeIcon: {
     position: 'absolute',
     top: -4,
     right: -4,
-    backgroundColor: '#FF6B6B',
+    backgroundColor: COLORS.error,
     borderRadius: 10,
     minWidth: 18,
     height: 18,
@@ -764,6 +1043,31 @@ const styles = StyleSheet.create({
   listHeaderContainer: {
     paddingTop: 8,
   },
+  // ========== CATÉGORIES STICKY ==========
+  categoriesWrapper: {
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+  },
+  categoriesScrollContent: {
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  categoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    gap: 6,
+  },
+  categoryText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  // Sections
   sectionContainer: {
     marginBottom: 24,
   },
@@ -782,20 +1086,69 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  // Boutiques
+  shopsScrollContent: {
+    paddingHorizontal: 12,
+    gap: 16,
+  },
+  shopItem: {
+    alignItems: 'center',
+    width: 90,
+  },
+  shopAvatarContainer: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: COLORS.accentLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  shopAvatar: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+  },
+  shopName: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  shopMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  verifiedText: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  dotSeparator: {
+    fontSize: 10,
+    marginHorizontal: 2,
+  },
+  shopDistance: {
+    fontSize: 10,
+  },
+  verificationBadge: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Produits horizontaux
   horizontalScrollContent: {
     paddingHorizontal: 12,
     gap: 12,
   },
+  // Produits en grille
   productCard: {
-    borderRadius: 12,
+    borderRadius: 8,
     overflow: 'hidden',
     borderWidth: 0.5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   imageContainer: {
     position: 'relative',
@@ -828,6 +1181,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   badgeText: {
+    color: '#fff',
     fontSize: 9,
     fontWeight: '800',
   },
@@ -926,23 +1280,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginBottom: 12,
   },
-  suggestionsContainer: {
-    marginBottom: 20,
-    paddingHorizontal: 12,
-  },
-  suggestionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 24,
-    marginRight: 12,
-    gap: 8,
-  },
-  suggestionText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
   footerLoader: {
     paddingVertical: 20,
     flexDirection: 'row',
@@ -1000,7 +1337,7 @@ const styles = StyleSheet.create({
   // Modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
   actionModal: {
@@ -1038,6 +1375,7 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
     borderTopWidth: 0.5,
+    borderTopColor: COLORS.border,
   },
   modalCancelText: {
     fontSize: 17,
