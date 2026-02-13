@@ -425,7 +425,7 @@ export default function DiscoverScreen() {
   };
 
   // ========== NAVIGATION ==========
-const handleSearch = () => router.push('/search');
+  const handleSearch = () => router.push('/search');
   const handleFavorites = () => router.push('/(tabs)/FavoritesScreen');
   const handleFilter = () => router.push('/(tabs)/FilterScreen');
   const handleNearbyShops = () => {
@@ -444,17 +444,12 @@ const handleSearch = () => router.push('/search');
 
   const goToDetail = (product: Product) => {
     router.push({
-      pathname: '/(tabs)/ProductDetail',
+      pathname: '/ProductDetail',
       params: { product: JSON.stringify(product) },
     });
   };
 
-  const contactWhatsApp = (product: Product) => {
-    const phone = product.seller?.phone || '+243896037137';
-    const msg = `Bonjour ${product.seller?.name}, je suis intéressé par "${product.title}" sur SHOPNET.`;
-    Linking.openURL(`https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`);
-  };
-
+  // ========== CONTACT (supprimé WhatsApp, gardé email) ==========
   const contactEmail = (product: Product) => {
     const email = product.seller?.email || 'vendeur@shopnet.com';
     const subject = `Demande: ${product.title}`;
@@ -875,10 +870,7 @@ const handleSearch = () => router.push('/search');
                   <Ionicons name="eye-outline" size={24} color={COLORS.accent} />
                   <Text style={[styles.modalActionText, { color: COLORS.text }]}>Voir détails</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); contactWhatsApp(selectedProduct); }}>
-                  <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
-                  <Text style={[styles.modalActionText, { color: COLORS.text }]}>WhatsApp</Text>
-                </TouchableOpacity>
+                {/* WhatsApp supprimé */}
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); contactEmail(selectedProduct); }}>
                   <Ionicons name="mail-outline" size={24} color={COLORS.accent} />
                   <Text style={[styles.modalActionText, { color: COLORS.text }]}>Email</Text>
@@ -939,10 +931,10 @@ const handleSearch = () => router.push('/search');
       {/* HEADER FIXE */}
       {renderFixedHeader()}
 
-      {/* CATÉGORIES STICKY - BIEN COLLÉES EN HAUT */}
+      {/* CATÉGORIES STICKY */}
       {renderCategoriesSection()}
 
-      {/* FLATLIST PRINCIPALE - 2 COLONNES */}
+      {/* FLATLIST PRINCIPALE */}
       <FlatList
         ref={flatListRef}
         data={feedProducts}
@@ -1043,7 +1035,6 @@ const styles = StyleSheet.create({
   listHeaderContainer: {
     paddingTop: 8,
   },
-  // ========== CATÉGORIES STICKY ==========
   categoriesWrapper: {
     paddingVertical: 12,
     borderBottomWidth: 0.5,
@@ -1067,7 +1058,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  // Sections
   sectionContainer: {
     marginBottom: 24,
   },
@@ -1086,7 +1076,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Boutiques
   shopsScrollContent: {
     paddingHorizontal: 12,
     gap: 16,
@@ -1138,12 +1127,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Produits horizontaux
   horizontalScrollContent: {
     paddingHorizontal: 12,
     gap: 12,
   },
-  // Produits en grille
   productCard: {
     borderRadius: 8,
     overflow: 'hidden',
@@ -1334,7 +1321,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
