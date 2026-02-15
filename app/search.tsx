@@ -583,7 +583,7 @@ export default function RechercheAvancee() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isMountedRef.current && product && product.id) {
       router.push({
-        pathname: "/Auth/Panier/DetailId",
+        pathname: "/ProductDetail",
         params: { id: product.id.toString() }
       });
     }
@@ -591,7 +591,7 @@ export default function RechercheAvancee() {
 
   const navigateToShop = (shopId: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/(tabs)/ShopDetail?id=${shopId}`);
+    router.push(`/ShopDetail?id=${shopId}`);
   };
 
   const navigateToCategory = (category: string) => {

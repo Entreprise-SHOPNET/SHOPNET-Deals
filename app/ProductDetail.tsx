@@ -1,6 +1,5 @@
 
 
-
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -15,7 +14,6 @@ import {
   Linking,
   Alert,
   ActivityIndicator,
-  FlatList,
   Modal,
   TextInput,
 } from 'react-native';
@@ -38,7 +36,7 @@ const COLORS = {
   error: '#F44336',
   whatsapp: '#25D366',
   email: '#0A68B4',
-  call: '#34A853', // couleur pour appeler
+  call: '#34A853',
 };
 
 type ProductDetail = {
@@ -191,44 +189,34 @@ export default function ProductDetail() {
     }
   };
 
-  // ---------- FORMATAGE NUMÉRO DE TÉLÉPHONE ----------
-  const formatPhoneForWhatsApp = (phone: string): string => {
-    // Supprime tous les caractères non numériques
-    let digits = phone.replace(/\D/g, '');
-    // Si le numéro ne commence pas par 243 (indicatif RDC) et n'a pas d'indicatif, on ajoute 243
-    if (!digits.startsWith('243') && digits.length <= 9) {
-      digits = '243' + digits;
-    }
-    return digits;
+  // ---------- FORMATAGE ----------
+  const formatPrice = (price: any) => {
+    const n = Number(price);
+    return isNaN(n) ? "N/A" : n.toFixed(2);
+  };
+
+  const formatPhoneNumber = (phone: string) => {
+    let cleaned = phone.trim().replace(/\D/g, "");
+    if (cleaned.startsWith("0")) cleaned = "243" + cleaned.substring(1);
+    return cleaned;
   };
 
   // ---------- ACTIONS DE CONTACT ----------
-  const sendWhatsApp = () => {
+  const openWhatsApp = () => {
     if (!seller || !product) return;
-    const rawPhone = seller.phone || '';
-    const phoneDigits = formatPhoneForWhatsApp(rawPhone);
-    if (!phoneDigits) {
-      Alert.alert('Erreur', 'Numéro de téléphone invalide');
+    const rawPhone = seller.phone || "";
+    if (!rawPhone) {
+      Alert.alert("Info", "Numéro WhatsApp non disponible");
       return;
     }
-
-    // Construction du message avec toutes les infos produit + lien image
-    const imageLink = product.images && product.images[0] ? product.images[0] : '';
-    const productLink = `https://shopnet.app/product/${product.id}`; // à adapter selon ton domaine
-
-    const message = `*Bonjour ${seller.nom}*%0A%0A` +
-      `Je suis intéressé(e) par votre produit :%0A` +
-      `*${product.title}*%0A` +
-      `*Prix :* $${product.price.toFixed(2)}%0A` +
-      `*Lien :* ${productLink}%0A` +
-      (imageLink ? `*Image :* ${imageLink}%0A%0A` : '%0A') +
-      `Est-il toujours disponible ?%0A%0A` +
-      `Merci !`;
-
-    const url = `https://wa.me/${phoneDigits}?text=${message}`;
-    Linking.openURL(url).catch(() => {
-      Alert.alert('Erreur', "Impossible d'ouvrir WhatsApp");
-    });
+    const phone = formatPhoneNumber(rawPhone);
+    const imageUrl = product.images?.[0] || "";
+    const productLink = `https://shopnet.app/product/${product.id}`; // à adapter
+    const message = `Bonjour, je suis intéressé par le produit "${product.title}" sur SHOPNET. Prix: $${formatPrice(product.price)}. Lien: ${productLink} ${imageUrl ? `Image: ${imageUrl}` : ''}`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert("Erreur", "Impossible d'ouvrir WhatsApp")
+    );
   };
 
   const sendEmail = () => {
@@ -241,7 +229,7 @@ export default function ProductDetail() {
     const body = `Bonjour ${seller.nom},\n\n` +
       `Je suis intéressé(e) par votre produit :\n` +
       `- ${product.title}\n` +
-      `- Prix : $${product.price.toFixed(2)}\n` +
+      `- Prix : $${formatPrice(product.price)}\n` +
       `- Lien : ${productLink}\n` +
       (imageLink ? `- Image : ${imageLink}\n` : '') +
       `\nEst-il toujours disponible ?\n\n` +
@@ -266,64 +254,28 @@ export default function ProductDetail() {
     });
   };
 
-  // ---------- COMMANDE ----------
-  const placeOrder = async () => {
+  // ---------- COMMANDE SIMULÉE (PUBLIQUE) ----------
+  const placeOrder = () => {
     if (!product) return;
-
     setSendingOrder(true);
-
-    const token = await AsyncStorage.getItem('@shopnet_token');
-    if (!token) {
-      Alert.alert('Connexion requise', 'Veuillez vous connecter pour passer une commande.');
+    // Simulation d'envoi de commande
+    setTimeout(() => {
       setSendingOrder(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${LOCAL_API}/commandes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          produits: [
-            {
-              produit_id: product.id,
-              quantite: orderQuantity,
+      setShowOrderModal(false);
+      Alert.alert(
+        '✅ Commande envoyée',
+        `Votre demande pour ${orderQuantity} x ${product.title} a été transmise au vendeur.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setOrderQuantity(1);
+              setOrderMessage('');
             },
-          ],
-          adresse_livraison: seller?.adresse || 'Adresse non précisée',
-          mode_paiement: 'especes',
-          commentaire: orderMessage,
-        }),
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        Alert.alert(
-          '✅ Commande envoyée',
-          `Votre commande #${data.numero_commande} a été transmise au vendeur.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                setShowOrderModal(false);
-                setOrderQuantity(1);
-                setOrderMessage('');
-              },
-            },
-          ]
-        );
-      } else {
-        Alert.alert('Erreur', data.error || 'Échec de la commande');
-      }
-    } catch (error) {
-      console.error('Erreur commande:', error);
-      Alert.alert('Erreur', 'Impossible de passer la commande pour le moment');
-    } finally {
-      setSendingOrder(false);
-    }
+          },
+        ]
+      );
+    }, 1500);
   };
 
   if (loading || !product) {
@@ -431,15 +383,15 @@ export default function ProductDetail() {
             {product.original_price ? (
               <>
                 <Text style={[styles.promoPrice, { color: COLORS.error }]}>
-                  ${product.price.toFixed(2)}
+                  ${formatPrice(product.price)}
                 </Text>
                 <Text style={[styles.originalPrice, { color: COLORS.textSecondary }]}>
-                  ${product.original_price.toFixed(2)}
+                  ${formatPrice(product.original_price)}
                 </Text>
               </>
             ) : (
               <Text style={[styles.price, { color: COLORS.accent }]}>
-                ${product.price.toFixed(2)}
+                ${formatPrice(product.price)}
               </Text>
             )}
           </View>
@@ -518,7 +470,7 @@ export default function ProductDetail() {
 
           {/* Boutons d'action : 2 par ligne */}
           <View style={styles.actionButtonsGrid}>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: COLORS.whatsapp }]} onPress={sendWhatsApp}>
+            <TouchableOpacity style={[styles.actionButton, { backgroundColor: COLORS.whatsapp }]} onPress={openWhatsApp}>
               <Ionicons name="logo-whatsapp" size={24} color="#fff" />
               <Text style={styles.actionButtonText}>WhatsApp</Text>
             </TouchableOpacity>
@@ -540,74 +492,66 @@ export default function ProductDetail() {
           </View>
         </View>
 
-        {/* Produits similaires */}
+        {/* Produits similaires - affichés en grille verticale 2 colonnes */}
         {similarProducts.length > 0 && (
-          <View style={styles.horizontalSection}>
-            <Text style={[styles.horizontalTitle, { color: COLORS.text }]}>Produits similaires</Text>
-            <FlatList
-              data={similarProducts}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
+          <View style={styles.gridSection}>
+            <Text style={[styles.gridTitle, { color: COLORS.text }]}>Produits similaires</Text>
+            <View style={styles.gridContainer}>
+              {similarProducts.map((item) => (
                 <TouchableOpacity
-                  style={[styles.horizontalCard, { borderColor: COLORS.border, backgroundColor: COLORS.background }]}
+                  key={item.id}
+                  style={[styles.gridCard, { borderColor: COLORS.border, backgroundColor: COLORS.background }]}
                   onPress={() => router.push({ pathname: '/ProductDetail', params: { id: item.id } })}
                 >
                   <Image
-                    source={{ uri: item.image_url || 'https://via.placeholder.com/120' }}
-                    style={styles.horizontalImage}
+                    source={{ uri: item.image_url || 'https://via.placeholder.com/150' }}
+                    style={styles.gridImage}
                   />
-                  <View style={styles.horizontalInfo}>
-                    <Text style={[styles.horizontalProductTitle, { color: COLORS.text }]} numberOfLines={2}>
+                  <View style={styles.gridInfo}>
+                    <Text style={[styles.gridProductTitle, { color: COLORS.text }]} numberOfLines={2}>
                       {item.title}
                     </Text>
-                    <Text style={[styles.horizontalPrice, { color: COLORS.accent }]}>
-                      ${(Number(item.price) || 0).toFixed(2)}
+                    <Text style={[styles.gridPrice, { color: COLORS.accent }]}>
+                      ${formatPrice(item.price)}
                     </Text>
                   </View>
                 </TouchableOpacity>
-              )}
-              contentContainerStyle={{ paddingRight: 16 }}
-            />
+              ))}
+            </View>
           </View>
         )}
 
-        {/* Autres produits du vendeur */}
+        {/* Autres produits du vendeur - grille verticale 2 colonnes */}
         {sameSellerProducts.length > 0 && (
-          <View style={styles.horizontalSection}>
-            <Text style={[styles.horizontalTitle, { color: COLORS.text }]}>Autres produits du vendeur</Text>
-            <FlatList
-              data={sameSellerProducts}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
+          <View style={styles.gridSection}>
+            <Text style={[styles.gridTitle, { color: COLORS.text }]}>Autres produits du vendeur</Text>
+            <View style={styles.gridContainer}>
+              {sameSellerProducts.map((item) => (
                 <TouchableOpacity
-                  style={[styles.horizontalCard, { borderColor: COLORS.border, backgroundColor: COLORS.background }]}
+                  key={item.id}
+                  style={[styles.gridCard, { borderColor: COLORS.border, backgroundColor: COLORS.background }]}
                   onPress={() => router.push({ pathname: '/ProductDetail', params: { id: item.id } })}
                 >
                   <Image
-                    source={{ uri: item.image_url || 'https://via.placeholder.com/120' }}
-                    style={styles.horizontalImage}
+                    source={{ uri: item.image_url || 'https://via.placeholder.com/150' }}
+                    style={styles.gridImage}
                   />
-                  <View style={styles.horizontalInfo}>
-                    <Text style={[styles.horizontalProductTitle, { color: COLORS.text }]} numberOfLines={2}>
+                  <View style={styles.gridInfo}>
+                    <Text style={[styles.gridProductTitle, { color: COLORS.text }]} numberOfLines={2}>
                       {item.title}
                     </Text>
-                    <Text style={[styles.horizontalPrice, { color: COLORS.accent }]}>
-                      ${(Number(item.price) || 0).toFixed(2)}
+                    <Text style={[styles.gridPrice, { color: COLORS.accent }]}>
+                      ${formatPrice(item.price)}
                     </Text>
                   </View>
                 </TouchableOpacity>
-              )}
-              contentContainerStyle={{ paddingRight: 16 }}
-            />
+              ))}
+            </View>
           </View>
         )}
       </ScrollView>
 
-      {/* Modal de commande (inchangé) */}
+      {/* Modal de commande (simulation) */}
       <Modal visible={showOrderModal} transparent animationType="slide" onRequestClose={() => setShowOrderModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: COLORS.background }]}>
@@ -630,7 +574,7 @@ export default function ProductDetail() {
                       {product.title}
                     </Text>
                     <Text style={[styles.orderProductPrice, { color: COLORS.accent }]}>
-                      ${product.price.toFixed(2)}
+                      ${formatPrice(product.price)}
                     </Text>
                   </View>
                 </View>
@@ -869,7 +813,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   actionButton: {
-    width: (width - 42) / 2, // deux boutons par ligne avec gap
+    width: (width - 42) / 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -882,35 +826,42 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  horizontalSection: {
+  // Styles pour la grille verticale 2 colonnes
+  gridSection: {
     marginTop: 24,
-    paddingLeft: 16,
+    paddingHorizontal: 16,
   },
-  horizontalTitle: {
+  gridTitle: {
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 12,
   },
-  horizontalCard: {
-    width: 140,
-    marginRight: 12,
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  gridCard: {
+    width: (width - 44) / 2, // 2 colonnes avec gap
     borderRadius: 8,
     borderWidth: 1,
     overflow: 'hidden',
+    marginBottom: 12,
   },
-  horizontalImage: {
+  gridImage: {
     width: '100%',
     height: 120,
   },
-  horizontalInfo: {
+  gridInfo: {
     padding: 8,
   },
-  horizontalProductTitle: {
+  gridProductTitle: {
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 4,
   },
-  horizontalPrice: {
+  gridPrice: {
     fontSize: 14,
     fontWeight: '700',
   },

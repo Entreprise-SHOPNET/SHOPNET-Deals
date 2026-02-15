@@ -1,5 +1,3 @@
-
-
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
@@ -28,8 +26,10 @@ const { width } = Dimensions.get('window');
 const LOCAL_API = 'https://shopnet-backend.onrender.com/api';
 const ITEMS_PER_PAGE = 10;
 const INITIAL_LIMIT = 50;
+const CACHE_KEY = '@shopnet_discover_cache';
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
 
-// ========== PALETTE DE COULEURS (STYLE ALIBABA) ==========
+// ========== PALETTE DE COULEURS ==========
 const COLORS = {
   background: '#FFFFFF',
   card: '#FFFFFF',
@@ -93,6 +93,13 @@ type Category = {
   id: string;
   name: string;
   icon: keyof typeof Ionicons.glyphMap;
+};
+
+type CacheData = {
+  timestamp: number;
+  products: Product[];
+  shops: Shop[];
+  trending: Product[];
 };
 
 // ========== COMPOSANT BADGE VÉRIFIÉ ==========
@@ -165,10 +172,11 @@ export default function DiscoverScreen() {
   const [favoritesCount, setFavoritesCount] = useState(0);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [actionModalVisible, setActionModalVisible] = useState(false);
+  const [isCacheLoaded, setIsCacheLoaded] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
 
-  // ========== CATÉGORIES (COMME DANS TON CODE QUI MARCHE) ==========
+  // ========== CATÉGORIES ==========
   const categories: Category[] = [
     { id: '1', name: 'Électronique', icon: 'phone-portrait-outline' },
     { id: '2', name: 'Mode', icon: 'shirt-outline' },
@@ -180,11 +188,54 @@ export default function DiscoverScreen() {
     { id: '8', name: 'Jouets', icon: 'game-controller-outline' },
   ];
 
-  // ========== CHARGEMENT INITIAL ==========
+  // ========== CHARGEMENT INITIAL AVEC CACHE ==========
   useEffect(() => {
-    loadFavoritesCount();
-    requestLocationAndFetchData();
+    const loadInitialData = async () => {
+      // Charger le cache d'abord
+      const cached = await loadCache();
+      if (cached) {
+        setAllProducts(cached.products);
+        setFeedProducts(cached.products.slice(0, ITEMS_PER_PAGE));
+        setShops(cached.shops);
+        setTrendingProducts(cached.trending);
+        setIsCacheLoaded(true);
+        setLoading(false);
+      }
+      // Puis lancer le rafraîchissement réseau
+      loadFavoritesCount();
+      requestLocationAndFetchData();
+    };
+    loadInitialData();
   }, []);
+
+  const loadCache = async (): Promise<CacheData | null> => {
+    try {
+      const cacheStr = await AsyncStorage.getItem(CACHE_KEY);
+      if (cacheStr) {
+        const cache: CacheData = JSON.parse(cacheStr);
+        if (Date.now() - cache.timestamp < CACHE_EXPIRY) {
+          return cache;
+        }
+      }
+    } catch (error) {
+      console.error('Erreur chargement cache:', error);
+    }
+    return null;
+  };
+
+  const saveCache = async (products: Product[], shops: Shop[], trending: Product[]) => {
+    try {
+      const cacheData: CacheData = {
+        timestamp: Date.now(),
+        products,
+        shops,
+        trending,
+      };
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+    } catch (error) {
+      console.error('Erreur sauvegarde cache:', error);
+    }
+  };
 
   const loadFavoritesCount = async () => {
     const favs = await getFavorites();
@@ -192,7 +243,8 @@ export default function DiscoverScreen() {
   };
 
   const requestLocationAndFetchData = async () => {
-    setLoading(true);
+    // Si on a déjà des données en cache, on ne met pas loading à true
+    if (!isCacheLoaded) setLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       let location = null;
@@ -210,7 +262,7 @@ export default function DiscoverScreen() {
       }
 
       await Promise.all([
-        fetchProducts(1, true),
+        fetchProducts(1, true, true), // force refresh
         fetchNearbyShops(location!.latitude, location!.longitude),
         fetchTrendingProducts(),
       ]);
@@ -235,8 +287,8 @@ export default function DiscoverScreen() {
     }
   };
 
-  // ========== PRODUITS ==========
-  const fetchProducts = async (pageNum = 1, shouldShuffle = false) => {
+  // ========== PRODUITS (CORRIGÉ : ÉVITE LES DOUBLONS) ==========
+  const fetchProducts = async (pageNum = 1, shouldShuffle = false, forceRefresh = false) => {
     try {
       const params = new URLSearchParams({
         page: pageNum.toString(),
@@ -260,9 +312,19 @@ export default function DiscoverScreen() {
         if (pageNum === 1) {
           setAllProducts(products);
           setFeedProducts(products.slice(0, ITEMS_PER_PAGE));
+          saveCache(products, shops, trendingProducts);
         } else {
-          setAllProducts(prev => [...prev, ...products]);
-          setFeedProducts(prev => [...prev, ...products]);
+          // Éviter les doublons en filtrant les produits déjà présents
+          setAllProducts(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newProducts = products.filter(p => !existingIds.has(p.id));
+            return [...prev, ...newProducts];
+          });
+          setFeedProducts(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newProducts = products.filter(p => !existingIds.has(p.id));
+            return [...prev, ...newProducts];
+          });
         }
         setPage(pageNum);
         setHasMore(pageNum < (data.totalPages || 1));
@@ -358,7 +420,7 @@ export default function DiscoverScreen() {
     setSelectedCategory(null);
     if (userLocation) {
       await Promise.all([
-        fetchProducts(1, true),
+        fetchProducts(1, true, true),
         fetchNearbyShops(userLocation.latitude, userLocation.longitude),
         fetchTrendingProducts(),
       ]);
@@ -426,12 +488,11 @@ export default function DiscoverScreen() {
 
   // ========== NAVIGATION ==========
   const handleSearch = () => router.push('/search');
-  const handleFavorites = () => router.push('/(tabs)/FavoritesScreen');
-  const handleFilter = () => router.push('/(tabs)/FilterScreen');
+  const handleFavorites = () => router.push('/Favoris');
   const handleNearbyShops = () => {
     if (userLocation) {
       router.push({
-        pathname: '/(tabs)/NearbyShopsScreen',
+        pathname: '/AllShops',
         params: {
           latitude: userLocation.latitude.toString(),
           longitude: userLocation.longitude.toString(),
@@ -449,7 +510,7 @@ export default function DiscoverScreen() {
     });
   };
 
-  // ========== CONTACT (supprimé WhatsApp, gardé email) ==========
+  // ========== CONTACT ==========
   const contactEmail = (product: Product) => {
     const email = product.seller?.email || 'vendeur@shopnet.com';
     const subject = `Demande: ${product.title}`;
@@ -457,7 +518,7 @@ export default function DiscoverScreen() {
     Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
   };
 
-  // ========== RENDU CARTE PRODUIT (GRILLE 2 COLONNES) ==========
+  // ========== RENDU CARTE PRODUIT ==========
   const renderProductCard = ({ item, index }: { item: Product; index: number }) => {
     const discount = item.original_price
       ? Math.round(((item.original_price - item.price) / item.original_price) * 100)
@@ -677,7 +738,7 @@ export default function DiscoverScreen() {
       <View style={styles.sectionContainer}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: COLORS.text }]}>Boutiques premium proches</Text>
-          <TouchableOpacity onPress={handleNearbyShops}>
+          <TouchableOpacity onPress={() => router.push('/AllShops')}>
             <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
           </TouchableOpacity>
         </View>
@@ -686,7 +747,7 @@ export default function DiscoverScreen() {
             <TouchableOpacity
               key={shop.id}
               style={styles.shopItem}
-              onPress={() => router.push(`/(tabs)/ShopDetail?id=${shop.id}`)}
+              onPress={() => router.push(`/ShopDetail?id=${shop.id}`)}
             >
               <View style={styles.shopAvatarContainer}>
                 <Image source={{ uri: shop.logo }} style={styles.shopAvatar} />
@@ -709,7 +770,7 @@ export default function DiscoverScreen() {
     );
   };
 
-  // ========== SECTION CATÉGORIES (STICKY - COMME DANS TON CODE) ==========
+  // ========== SECTION CATÉGORIES ==========
   const renderCategoriesSection = () => (
     <View style={[styles.categoriesWrapper, { backgroundColor: COLORS.background, borderBottomColor: COLORS.border }]}>
       <ScrollView
@@ -756,7 +817,7 @@ export default function DiscoverScreen() {
       <View style={styles.sectionContainer}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: COLORS.text }]}>🔥 Produits Boostés</Text>
-          <TouchableOpacity onPress={() => router.push('/(tabs)/BoostedProducts')}>
+          <TouchableOpacity onPress={() => router.push('/BoostedProducts')}>
             <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
           </TouchableOpacity>
         </View>
@@ -775,7 +836,7 @@ export default function DiscoverScreen() {
       <View style={styles.sectionContainer}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: COLORS.text }]}>💰 Meilleures offres</Text>
-          <TouchableOpacity onPress={() => router.push('/(tabs)/PromoProducts')}>
+          <TouchableOpacity onPress={() => router.push('/PromoProducts')}>
             <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
           </TouchableOpacity>
         </View>
@@ -793,7 +854,7 @@ export default function DiscoverScreen() {
       <View style={styles.sectionContainer}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: COLORS.text }]}>📈 Les plus recherchés</Text>
-          <TouchableOpacity onPress={() => router.push('/(tabs)/TrendingProducts')}>
+          <TouchableOpacity onPress={() => router.push('/TrendingProducts')}>
             <Text style={[styles.seeAllText, { color: COLORS.accent }]}>Voir tout</Text>
           </TouchableOpacity>
         </View>
@@ -804,11 +865,11 @@ export default function DiscoverScreen() {
     );
   };
 
-  // ========== HEADER FIXE ==========
+  // ========== HEADER FIXE (SANS TRI) ==========
   const renderFixedHeader = () => (
     <View style={[styles.fixedHeader, { backgroundColor: COLORS.headerBg, borderBottomColor: COLORS.border }]}>
       <View style={styles.headerLeft}>
-        <TouchableOpacity onPress={() => router.push('/(tabs)')}>
+        <TouchableOpacity onPress={() => router.push('/')}>
           <Ionicons name="cube-outline" size={28} color={COLORS.accent} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: COLORS.text }]}>
@@ -827,9 +888,6 @@ export default function DiscoverScreen() {
               <Text style={styles.badgeIconText}>{favoritesCount}</Text>
             </View>
           )}
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton} onPress={handleFilter}>
-          <Ionicons name="options-outline" size={22} color={COLORS.accent} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.iconButton} onPress={handleNearbyShops}>
           <Ionicons name="storefront-outline" size={22} color={COLORS.accent} />
@@ -870,7 +928,6 @@ export default function DiscoverScreen() {
                   <Ionicons name="eye-outline" size={24} color={COLORS.accent} />
                   <Text style={[styles.modalActionText, { color: COLORS.text }]}>Voir détails</Text>
                 </TouchableOpacity>
-                {/* WhatsApp supprimé */}
                 <TouchableOpacity style={styles.modalAction} onPress={() => { setActionModalVisible(false); contactEmail(selectedProduct); }}>
                   <Ionicons name="mail-outline" size={24} color={COLORS.accent} />
                   <Text style={[styles.modalActionText, { color: COLORS.text }]}>Email</Text>
@@ -914,7 +971,7 @@ export default function DiscoverScreen() {
   };
 
   // ========== ÉTAT DE CHARGEMENT ==========
-  if (loading && allProducts.length === 0) {
+  if (loading && !isCacheLoaded) {
     return (
       <SafeAreaView style={[styles.loadingContainer, { backgroundColor: COLORS.background }]}>
         <StatusBar barStyle={COLORS.statusBar as any} backgroundColor={COLORS.headerBg} />
