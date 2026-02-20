@@ -3,6 +3,7 @@
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
+import messaging from '@react-native-firebase/messaging';
 
 export default function SplashScreen() {
   const router = useRouter();
@@ -10,7 +11,52 @@ export default function SplashScreen() {
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
-    // Animation logo
+    const initApp = async () => {
+      await requestFCMToken();
+      startAnimation();
+      navigateNext();
+    };
+
+    initApp();
+  }, []);
+
+  // 🔥 Fonction FCM
+  const requestFCMToken = async () => {
+    try {
+      const authStatus = await messaging().requestPermission();
+
+      const enabled =
+        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+
+      if (!enabled) {
+        console.log("❌ Permission notification refusée");
+        return;
+      }
+
+      const token = await messaging().getToken();
+      console.log("🔥 FCM TOKEN:", token);
+
+      // 🔥 Envoi vers ton backend
+      await fetch('https://shopnet-backend.onrender.com/api/save-fcm-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: 1, // ⚠️ Remplace par l'utilisateur connecté
+          fcmToken: token,
+        }),
+      });
+
+      console.log("✅ Token envoyé au backend");
+
+    } catch (error) {
+      console.log("❌ Erreur FCM:", error);
+    }
+  };
+
+  const startAnimation = () => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -23,14 +69,13 @@ export default function SplashScreen() {
         useNativeDriver: true,
       }),
     ]).start();
+  };
 
-    // Navigation vers Discover
-    const timer = setTimeout(() => {
-      router.push('/discover');
+  const navigateNext = () => {
+    setTimeout(() => {
+      router.replace('/discover');
     }, 1800);
-
-    return () => clearTimeout(timer);
-  }, []);
+  };
 
   return (
     <View style={styles.container}>
@@ -48,7 +93,7 @@ export default function SplashScreen() {
 
       <Animated.View style={[styles.brandContainer, { opacity: fadeAnim }]}>
         <Text style={styles.brand}>SHOPNET</Text>
-        <Text style={styles.subBrand}>Discover</Text>
+        <Text style={styles.subBrand}>Deals</Text>
       </Animated.View>
     </View>
   );
@@ -61,7 +106,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-
   logoContainer: {
     backgroundColor: '#FFFFFF',
     width: 96,
@@ -72,17 +116,14 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     elevation: 6,
   },
-
   logo: {
     fontSize: 42,
     fontWeight: 'bold',
     color: '#324A62',
   },
-
   brandContainer: {
     alignItems: 'center',
   },
-
   brand: {
     fontSize: 26,
     fontWeight: 'bold',
@@ -90,7 +131,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     lineHeight: 30,
   },
-
   subBrand: {
     fontSize: 14,
     color: '#DDE3EA',
