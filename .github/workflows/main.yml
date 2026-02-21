@@ -60,3 +60,5 @@ jobs:
         with:
           name: shopnet-apk
           path: app.apk
+
+          
