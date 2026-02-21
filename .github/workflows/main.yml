@@ -1,38 +1,62 @@
-name: Build SHOPNET Deals APK
+name: Build Android APK
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build:
-    name: EAS Build APK
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Récupérer le code source
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # 2. Installer Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 18
 
+      # 3. Installer les dépendances du projet
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
+      # 4. Installer EAS CLI
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
-      - name: Authenticate with Expo
+      # 5. Configurer les variables d'environnement
+      - name: Set Expo token and automatic keystore
+        run: |
+          echo "EXPO_TOKEN=${{ secrets.EXPO_TOKEN }}" >> $GITHUB_ENV
+          echo "EAS_BUILD_AUTOMATIC_KEYSTORE=1" >> $GITHUB_ENV
+
+      # 6. Vérifier la connexion à Expo
+      - name: Verify Expo login
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas whoami
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      # 7. Build APK
       - name: Build APK
-        run: eas build -p android --profile apk --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas build --platform android --profile apk --non-interactive
 
-          
+      # 8. Télécharger le dernier APK depuis Expo
+      - name: Download APK from Expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          echo "⏳ Récupération du dernier build APK..."
+          BUILD_URL=$(eas build:list --platform android --status finished --limit 1 --non-interactive | grep -o 'https://[^ ]*\.apk')
+          echo "📦 Téléchargement depuis : $BUILD_URL"
+          curl -L -o app.apk "$BUILD_URL"
+
+      # 9. Upload APK artifact vers GitHub
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shopnet-apk
+          path: app.apk
