@@ -1,7 +1,14 @@
 
 
-import { View, Text, StyleSheet, Animated } from 'react-native';
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Animated,
+  Platform,
+  PermissionsAndroid,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import messaging from '@react-native-firebase/messaging';
 
@@ -11,50 +18,9 @@ export default function SplashScreen() {
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
-    const initApp = async () => {
-      await requestFCMToken();
-      startAnimation();
-      navigateNext();
-    };
-
-    initApp();
+    initializeFCM();
+    startAnimation();
   }, []);
-
-  // 🔥 Fonction FCM
-  const requestFCMToken = async () => {
-    try {
-      const authStatus = await messaging().requestPermission();
-
-      const enabled =
-        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-
-      if (!enabled) {
-        console.log("❌ Permission notification refusée");
-        return;
-      }
-
-      const token = await messaging().getToken();
-      console.log("🔥 FCM TOKEN:", token);
-
-      // 🔥 Envoi vers ton backend
-      await fetch('https://shopnet-backend.onrender.com/api/save-fcm-token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: 1, // ⚠️ Remplace par l'utilisateur connecté
-          fcmToken: token,
-        }),
-      });
-
-      console.log("✅ Token envoyé au backend");
-
-    } catch (error) {
-      console.log("❌ Erreur FCM:", error);
-    }
-  };
 
   const startAnimation = () => {
     Animated.parallel([
@@ -69,12 +35,55 @@ export default function SplashScreen() {
         useNativeDriver: true,
       }),
     ]).start();
+
+    setTimeout(() => {
+      router.push('/discover');
+    }, 1800);
   };
 
-  const navigateNext = () => {
-    setTimeout(() => {
-      router.replace('/discover');
-    }, 1800);
+  const initializeFCM = async () => {
+    try {
+      console.log('📱 Android Version:', Platform.Version);
+
+      // Android 13+ (API 33+) requires runtime permission
+      if (Platform.OS === 'android' && Platform.Version >= 33) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+        );
+
+        console.log('🔔 Notification permission:', granted);
+      }
+
+      // Request Firebase permission (iOS mainly, safe on Android)
+      await messaging().requestPermission();
+
+      // Get FCM Token
+      const token = await messaging().getToken();
+
+      if (token) {
+        console.log('🔥 FCM TOKEN:', token);
+
+        const response = await fetch(
+          'https://shopnet-backend.onrender.com/api/save-fcm-token',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fcmToken: token,
+            }),
+          }
+        );
+
+        const result = await response.text();
+        console.log('✅ Backend response:', result);
+      } else {
+        console.log('⚠️ Aucun token reçu');
+      }
+    } catch (error) {
+      console.log('❌ FCM Error:', error);
+    }
   };
 
   return (
@@ -93,7 +102,7 @@ export default function SplashScreen() {
 
       <Animated.View style={[styles.brandContainer, { opacity: fadeAnim }]}>
         <Text style={styles.brand}>SHOPNET</Text>
-        <Text style={styles.subBrand}>Deals</Text>
+        <Text style={styles.subBrand}>Discover</Text>
       </Animated.View>
     </View>
   );
